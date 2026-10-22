@@ -17,7 +17,7 @@ jobs:
         node: ['22.22.2', '24']
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: ${{ matrix.node }}
       # Run the upgrade from an isolated npm copy: npm bundled with Node 22.22.2
