@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.7
 
-FROM node:24-trixie-slim AS base
+FROM node:26-trixie-slim AS base
 RUN npm install --global npm@12.2.0 \
     && npm install --global --allow-scripts=pnpm pnpm@12.14.0
 WORKDIR /repo
