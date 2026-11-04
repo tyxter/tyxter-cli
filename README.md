@@ -16,6 +16,43 @@ for cutover validation, not as a durable production transport.
 
 ## Quick Start
 
+Requires Node.js 22.12 or newer. Run the published npm package directly; Docker,
+pnpm, and a source checkout are optional:
+
+```bash
+npx @tyxter/cli --version
+npx @tyxter/cli --help
+# Load TYXTER_API_KEY from your secret manager or ignored local env file.
+# It must be a tx_sandbox_ key; keep its value out of command history.
+npx @tyxter/cli listen --from-now --forward-to http://localhost:3000/webhooks/tyxter
+```
+
+The listener prints its local signing secret on startup. Set the same value in
+your app's webhook verifier. Alternatively, supply a local test secret to both
+processes through `TYXTER_WEBHOOK_SECRET`. Treat these values as sensitive.
+
+Run diagnostics from another terminal with the same environment and working
+directory:
+
+```bash
+npx @tyxter/cli doctor --forward-to http://localhost:3000/webhooks/tyxter
+npx @tyxter/cli status
+```
+
+State is stored in `.tyxter-cli/` in your current directory. Keep that directory
+ignored by git and reuse it across commands. Override it with
+`TYXTER_CLI_STATE_DIR` or `--state-dir`.
+
+To install a persistent `tyxter` command, run `npm install --global @tyxter/cli`.
+The official compatibility package `tyxter-cli` also works:
+`npx tyxter-cli listen --from-now --forward-to http://localhost:3000/webhooks/tyxter`.
+It runs the exact matching version of `@tyxter/cli`.
+
+`--from-now` checkpoints existing sandbox events before listening. Omit it when
+you want to replay pending events.
+
+## Use Docker
+
 Build from the cloned repo:
 
 ```bash

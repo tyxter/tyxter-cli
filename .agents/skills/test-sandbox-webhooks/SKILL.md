@@ -1,11 +1,11 @@
 ---
 name: test-sandbox-webhooks
-description: Set up and run Tyxter sandbox webhook tests against a customer app using the tyxter-cli Docker container. Use when a user asks Codex or Claude Code to test a Tyxter webhook integration, validate local sandbox webhooks, run the CLI listener against their app, create reusable sandbox webhook smoke tests, or debug the CLI + app combo.
+description: Set up and run Tyxter sandbox webhook tests against a customer app using the published @tyxter/cli npm package or Docker. Use when a user asks Codex or Claude Code to test a Tyxter webhook integration, validate local sandbox webhooks, run the CLI listener against their app, create reusable sandbox webhook smoke tests, or debug the CLI + app combo.
 ---
 
 # Test Sandbox Webhooks
 
-Use the Tyxter CLI container as the customer would: a sandbox API key,
+Use Tyxter CLI as the customer would: a sandbox API key,
 a local app webhook URL, and signed forwarded events. Do not ask the user to
 register a normal dashboard webhook endpoint for this local sandbox flow.
 
@@ -25,6 +25,17 @@ register a normal dashboard webhook endpoint for this local sandbox flow.
    - If any of these cannot be inferred safely, ask one concise question.
 
 2. Choose the listener mode.
+   - Prefer npm with Node 22.12+: `npx @tyxter/cli --help`. No Docker, pnpm,
+     or source checkout is needed. Read the key from `TYXTER_API_KEY` in the
+     environment; keep its value out of command history.
+   - In npm mode use `http://localhost:<port><path>` for forwarding. Start
+     `npx @tyxter/cli listen --from-now --forward-to <url>` after step 3,
+     then run `npx @tyxter/cli doctor --forward-to <url>` and
+     `npx @tyxter/cli status` from the same working directory. Run step 6 with
+     `npx @tyxter/cli simulate inbound` and the same event arguments. Capture
+     listener output for step 7. Use `tour` if checkpointing belongs in the proof.
+     Reuse `.tyxter-cli/` (or `TYXTER_CLI_STATE_DIR`) across commands and keep
+     it ignored by git. Steps 4 and 5 below show the Docker alternative.
    - Pull image: use `ghcr.io/tyxter/tyxter-cli:latest`.
    - Build source: use `compose.yaml` from the Tyxter CLI repo.
    - If the customer app repo has no compose file and the user wants reusable setup, run the
@@ -110,7 +121,7 @@ register a normal dashboard webhook endpoint for this local sandbox flow.
 
 ## Completion Criteria
 
-- The app is running and reachable by the listener container.
+- The app is running and reachable by the listener process.
 - `status` prints a persisted local signing secret and cursor.
 - `doctor` passes, or any diagnostic-only failure is explained and a real event succeeds.
 - A sandbox event is created and forwarded to the app.

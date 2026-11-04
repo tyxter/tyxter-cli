@@ -1,0 +1,32 @@
+{
+  "name": "tyxter-cli",
+  "version": "0.1.2",
+  "description": "Compatibility command for @tyxter/cli, the Tyxter webhook testing CLI.",
+  "license": "MIT",
+  "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/tyxter/tyxter-cli.git",
+    "directory": "packages/tyxter-cli"
+  },
+  "homepage": "https://github.com/tyxter/tyxter-cli#readme",
+  "bugs": "https://github.com/tyxter/tyxter-cli/issues",
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  },
+  "bin": {
+    "tyxter-cli": "bin/tyxter-cli.js"
+  },
+  "dependencies": {
+    "@tyxter/cli": "0.1.2"
+  },
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "files": [
+    "bin/tyxter-cli.js",
+    "README.md",
+    "LICENSE"
+  ]
+}

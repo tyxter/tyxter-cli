@@ -62,9 +62,11 @@ Run the CLI locally:
 pnpm dev -- status
 pnpm dev -- listen \
   --api-url https://api.tyxter.com \
-  --api-key tx_sandbox_redacted \
   --forward-to http://localhost:3000/webhooks/tyxter
 ```
+
+Load the sandbox key through `TYXTER_API_KEY` in your environment; keep its value
+out of command history.
 
 Validate the Docker path:
 
@@ -103,14 +105,28 @@ Public command output is part of the product. If you change JSON object names,
 headers, exit codes, environment variables, or command names, call that out in
 the pull request.
 
-Before tagging a release, set `package.json` to the intended version and use an
+Before tagging a release, set both `package.json` and
+`packages/tyxter-cli/package.json` to the intended version, pin the alias's
+`@tyxter/cli` dependency to that exact version, and use an
 exact matching `v<version>` tag. CI validates the tag, both supported Node versions,
 and amd64/arm64 containers before publishing. Only stable version tags update the
 `latest` image. Containers publish only on version tags; pushes to `main` and
 pull requests run validation without publishing. The final image has no shell
 or package manager.
 
-After a version tag passes validation and its container is published, GitHub
+The tag workflow publishes both npm packages using GitHub OIDC trusted publishing
+with provenance before publishing the container. Stable versions use the npm
+`latest` tag; other versions use `next`. Reruns skip npm versions already published.
+`pnpm check:package` checks both tarballs and installs and runs their executables
+outside the source tree.
+
+For initial setup, publish both packages once with an authorized npm account,
+then configure a trusted publisher on each package for GitHub organization
+`tyxter`, repository `tyxter-cli`, workflow `publish-tyxter-cli.yml`, no environment,
+and direct publish permission. npm may require an interactive 2FA login for this
+account setting. Do not add an npm token to GitHub secrets.
+
+After a version tag passes validation and npm and its container are published, GitHub
 Actions creates a GitHub release with generated release notes and the container
 image reference. Stable versions are marked latest; other versions are marked
 as prereleases. Rerunning the workflow preserves an existing release.

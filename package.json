@@ -1,11 +1,21 @@
 {
   "name": "@tyxter/cli",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Tyxter CLI for local webhook testing.",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/tyxter/tyxter-cli.git"
+  },
+  "homepage": "https://github.com/tyxter/tyxter-cli#readme",
+  "bugs": "https://github.com/tyxter/tyxter-cli/issues",
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  },
   "type": "module",
   "bin": {
-    "tyxter": "./dist/main.js"
+    "tyxter": "dist/main.js"
   },
   "scripts": {
     "build": "pnpm clean && tsc -p tsconfig.build.json",

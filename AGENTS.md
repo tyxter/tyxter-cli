@@ -55,12 +55,22 @@ Listener jitter preserves the server's `next_poll_after_ms` lower bound. Each
 - `scripts/tour-demo.mjs` — local tour receiver demo used by `pnpm tour:demo`.
 - `scripts/release-metadata.mjs` — validates tag/version agreement and stable channel eligibility.
 - `scripts/check-package.mjs` — verifies npm package contents before release.
+- `packages/tyxter-cli/` — npm compatibility executable pinned to the exact `@tyxter/cli` release.
 - `tsconfig.build.json`, `vitest.config.ts` — exclude tests from the production build and compiled output from test discovery.
 - `compose.yaml`, `compose.image.yaml`, `Dockerfile` — container plumbing.
 - `.agents/skills/test-sandbox-webhooks/` — bundled Codex/Claude skill for
   driving the CLI against a customer app.
 
 ## Default Task: Run The Listener
+
+Prefer `npx @tyxter/cli listen --from-now --forward-to http://localhost:<port>/<path>`
+with Node 22.12+ when Docker is unavailable or the user wants npm. Read the sandbox
+key from `TYXTER_API_KEY`; do not put credentials in command history. No pnpm or
+source build is needed. State defaults to `.tyxter-cli/` in the working directory;
+reuse that directory for `npx @tyxter/cli doctor` and `npx @tyxter/cli status`.
+The official `npx tyxter-cli` compatibility package runs the same CLI.
+
+For Docker, follow the workflow below.
 
 Assume the user already has a sandbox API key (`tx_sandbox_...`). Do not ask
 them to register a dashboard webhook for local sandbox testing — that is what
@@ -166,7 +176,12 @@ Rebuild the container (`docker compose build`) if you changed anything under
   and linux/amd64/linux/arm64 containers.
   Containers publish only on matching version tags; stable tags update `latest`.
   Main pushes and pull requests run validation without publishing.
-  After container publishing succeeds, CI creates a GitHub release with generated
+  npm publishes `@tyxter/cli` then `tyxter-cli` with GitHub OIDC and provenance;
+  both versions and the alias dependency must match. Stable tags use npm `latest`;
+  other tags use `next`. Configure both npm trusted publishers for
+  `tyxter/tyxter-cli`, workflow `publish-tyxter-cli.yml`, with publish permission.
+  No npm token belongs in GitHub secrets. Existing npm versions are skipped on rerun.
+  After npm and container publishing succeed, CI creates a GitHub release with generated
   notes; reruns preserve existing releases. Non-stable tags create prereleases.
 
 - Refuse live keys for normal sandbox commands (`listen`, `checkpoint`,
