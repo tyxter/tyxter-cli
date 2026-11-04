@@ -1,6 +1,6 @@
 {
   "name": "tyxter-cli",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "Compatibility command for @tyxter/cli, the Tyxter webhook testing CLI.",
   "license": "MIT",
   "type": "module",
@@ -19,7 +19,7 @@
     "tyxter-cli": "bin/tyxter-cli.js"
   },
   "dependencies": {
-    "@tyxter/cli": "0.1.2"
+    "@tyxter/cli": "0.1.3"
   },
   "engines": {
     "node": ">=22.12.0"

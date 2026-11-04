@@ -1,6 +1,6 @@
 {
   "name": "@tyxter/cli",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "Tyxter CLI for local webhook testing.",
   "license": "MIT",
   "repository": {
