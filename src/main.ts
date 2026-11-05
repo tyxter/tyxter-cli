@@ -2,7 +2,7 @@
 
 import { readFileSync } from 'node:fs';
 
-import { parseCli, helpText } from './args.js';
+import { DEFAULT_API_URL, parseCli, helpText } from './args.js';
 import { checkpointListenCursor } from './checkpoint.js';
 import { runDoctor } from './doctor.js';
 import { resendListenEvent } from './events.js';
@@ -11,12 +11,12 @@ import {
   createWebhookListenSession,
   disableWebhookListenSession,
 } from './listen-session.js';
-import { runListener } from './listener.js';
+import { type ForwardFailure, runListener } from './listener.js';
 import { tailWebhookLogs } from './logs.js';
 import type { WebhookEventLog } from './schemas.js';
 import { simulateInboundMessage } from './simulate.js';
 import { readStatus } from './status.js';
-import { resolveListenerState, writeListenerState } from './state.js';
+import { DEFAULT_STATE_DIR, resolveListenerState, writeListenerState } from './state.js';
 import { runTour } from './tour.js';
 
 async function main(): Promise<void> {
@@ -95,7 +95,7 @@ async function main(): Promise<void> {
         const expiryTimer = setTimeout(() => controller.abort(), expiresInMs);
         expiryTimer.unref();
         try {
-          await runListener({
+          const result = await runListener({
             ...listenOptions,
             signingSecret: listenerState.signingSecret,
             cursor: listenOptions.cursor,
@@ -131,7 +131,9 @@ async function main(): Promise<void> {
               }
               console.log(`Listen rate limited; retrying after ${retryAfterMs}ms`);
             },
-            onBatch: ({ delivered, eventIds, cursor, hasMore }) => {
+            // events resend refuses live keys, so production failures carry no replay command.
+            onForwardFailure: (failure) => printForwardFailure(failure, json, null),
+            onBatch: ({ delivered, failed, eventIds, cursor, hasMore }) => {
               if (json) {
                 console.log(
                   compactJson({
@@ -151,11 +153,12 @@ async function main(): Promise<void> {
                 console.log(
                   `Forwarded ${delivered} event${delivered === 1 ? '' : 's'}; cursor=${cursor ?? ''}${ids}`,
                 );
-              } else if (!hasMore) {
+              } else if (!hasMore && failed === 0) {
                 console.log('No new events.');
               }
             },
           });
+          if (listenOptions.once && result.failed > 0) process.exitCode = 1;
         } finally {
           clearTimeout(expiryTimer);
         }
@@ -241,7 +244,7 @@ async function main(): Promise<void> {
       const controller = new AbortController();
       process.once('SIGINT', () => controller.abort());
       process.once('SIGTERM', () => controller.abort());
-      await runListener({
+      const result = await runListener({
         ...listenOptions,
         signingSecret: listenerState.signingSecret,
         cursor: startCursor ?? undefined,
@@ -276,7 +279,15 @@ async function main(): Promise<void> {
           }
           console.log(`Listen rate limited; retrying after ${retryAfterMs}ms`);
         },
-        onBatch: async ({ delivered, eventIds, cursor, hasMore }) => {
+        onForwardFailure: (failure) => {
+          printForwardFailure(failure, json, resendCommand({
+            eventId: failure.eventId,
+            forwardTo: listenOptions.forwardTo,
+            apiUrl: listenOptions.apiUrl,
+            stateDir,
+          }));
+        },
+        onBatch: async ({ delivered, failed, eventIds, cursor, hasMore }) => {
           await writeListenerState(stateDir, {
             signingSecret: listenerState.signingSecret,
             cursor,
@@ -299,11 +310,13 @@ async function main(): Promise<void> {
             console.log(
               `Forwarded ${delivered} event${delivered === 1 ? '' : 's'}; cursor=${cursor ?? ''}${ids}`,
             );
-          } else if (!hasMore) {
+          } else if (!hasMore && failed === 0) {
             console.log('No new events.');
           }
         },
       });
+      // A finite run reports through its exit code; a long-running one reports each failure.
+      if (listenOptions.once && result.failed > 0) process.exitCode = 1;
       return;
     }
 
@@ -480,6 +493,57 @@ function printCleanupWarning(error: unknown, json: boolean, listenSessionId: str
     return;
   }
   console.error(`Could not disable production listen session ${listenSessionId}: ${message}`);
+}
+
+function printForwardFailure(
+  failure: ForwardFailure,
+  json: boolean,
+  replayCommand: string | null,
+): void {
+  if (json) {
+    console.error(
+      compactJson({
+        object: 'tyxter_cli_listen_forward_failed',
+        event_id: failure.eventId,
+        event_type: failure.eventType,
+        failure: failure.kind,
+        status_code: failure.statusCode,
+        error: failure.message,
+        replay_command: replayCommand,
+      }),
+    );
+    return;
+  }
+  const reason =
+    failure.kind === 'http_status'
+      ? `HTTP ${failure.statusCode}`
+      : `${FORWARD_FAILURE_LABELS[failure.kind]} (${failure.message})`;
+  const replay = replayCommand ? `; replay with: ${replayCommand}` : '';
+  console.error(
+    `Forward failed for event ${failure.eventId} (${failure.eventType ?? 'unknown type'}): ${reason}${replay}`,
+  );
+}
+
+const FORWARD_FAILURE_LABELS: Record<Exclude<ForwardFailure['kind'], 'http_status'>, string> = {
+  timeout: 'timeout',
+  connection_refused: 'connection refused',
+  request_failed: 'request failed',
+};
+
+function resendCommand(input: {
+  eventId: string;
+  forwardTo: string;
+  apiUrl: string;
+  stateDir: string;
+}): string {
+  const args = ['tyxter', 'events', 'resend', input.eventId, '--forward-to', input.forwardTo];
+  if (input.apiUrl !== DEFAULT_API_URL) args.push('--api-url', input.apiUrl);
+  if (input.stateDir !== DEFAULT_STATE_DIR) args.push('--state-dir', input.stateDir);
+  return args.map(shellWord).join(' ');
+}
+
+function shellWord(value: string): string {
+  return /^[\w@%+=:,./-]+$/.test(value) ? value : `'${value.replaceAll("'", `'\\''`)}'`;
 }
 
 function formatWebhookEvent(event: WebhookEventLog): string {

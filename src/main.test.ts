@@ -71,6 +71,63 @@ describe('listen command output', () => {
     }
   });
 
+  it('forwards the rest of a --once page after a failed forward, saves the cursor, and exits 1', async () => {
+    const stateDir = await mkdtemp(join(tmpdir(), 'tyxter-listen-test-'));
+    const forwarded: string[] = [];
+    const server = createServer((request, response) => {
+      if (request.url?.startsWith('/v1/webhook-events/listen')) {
+        response.writeHead(200, { 'content-type': 'application/json' });
+        response.end(JSON.stringify({
+          object: 'webhook_event_listen',
+          data: [
+            { id: 'out_rejected', type: 'message.received', payload: {} },
+            { id: 'out_accepted', type: 'message.received', payload: {} },
+          ],
+          has_more: false,
+          next_cursor: 'cur_page',
+        }));
+        return;
+      }
+      const eventId = String(request.headers['tyxter-webhook-id']);
+      forwarded.push(eventId);
+      response.writeHead(eventId === 'out_rejected' ? 500 : 204).end();
+    });
+
+    try {
+      await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+      const address = server.address();
+      if (!address || typeof address === 'string') throw new Error('Missing test server port.');
+      const url = `http://127.0.0.1:${address.port}`;
+      const failure = await execFileAsync(process.execPath, [
+        '--import', 'tsx', 'src/main.ts', 'listen', '--json', '--once',
+        '--api-url', url, '--api-key', 'tx_sandbox_test', '--forward-to', `${url}/hook`,
+        '--state-dir', stateDir,
+      ], { env: { PATH: process.env.PATH }, timeout: 10_000 }).then(
+        () => { throw new Error('listen --once exited 0 after a failed forward'); },
+        (error: unknown) => error as { code: number; stdout: string; stderr: string },
+      );
+
+      expect(failure.code).toBe(1);
+      expect(forwarded).toEqual(['out_rejected', 'out_accepted']);
+      expect(failure.stdout.trim().split(/\r?\n/).map((line) => JSON.parse(line))).toMatchObject([
+        { object: 'tyxter_cli_listen_start' },
+        { object: 'tyxter_cli_listen_batch', delivered: 1, event_ids: ['out_accepted'] },
+      ]);
+      expect(failure.stderr.trim().split(/\r?\n/).map((line) => JSON.parse(line))).toMatchObject([{
+        object: 'tyxter_cli_listen_forward_failed',
+        event_id: 'out_rejected',
+        event_type: 'message.received',
+        failure: 'http_status',
+        status_code: 500,
+        replay_command: expect.any(String),
+      }]);
+      expect((await readListenerState(stateDir))?.cursor).toBe('cur_page');
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+      await rm(stateDir, { recursive: true, force: true });
+    }
+  });
+
   it('disables a production session when interrupted during creation and cleanup', async () => {
     const stateDir = await mkdtemp(join(tmpdir(), 'tyxter-production-test-'));
     const requests: string[] = [];

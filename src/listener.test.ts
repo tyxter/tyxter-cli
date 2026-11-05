@@ -1,3 +1,5 @@
+import { createServer } from 'node:net';
+
 import { describe, expect, it, vi } from 'vitest';
 
 import { FORWARDED_WEBHOOK_HEADERS, forwardEvent, pollOnce, runListener } from './listener.js';
@@ -316,6 +318,48 @@ describe('webhook listener', () => {
     expect(sleepMs).toEqual([1500, 3000]);
   });
 
+  it.each([
+    ['non-2xx', async () => new Response('boom', { status: 500 }), { kind: 'http_status', statusCode: 500 }],
+    ['timeout', async () => {
+      throw new DOMException('local webhook forward timed out after 30000ms', 'TimeoutError');
+    }, { kind: 'timeout', statusCode: null }],
+    ['connection refused', async (init?: RequestInit) => fetch(await closedPortUrl(), init), {
+      kind: 'connection_refused', statusCode: null,
+    }],
+  ])('keeps forwarding after a %s local forward failure', async (_name, failForward, expected) => {
+    const controller = new AbortController();
+    const attempts: string[] = [];
+    const failures: unknown[] = [];
+    let polls = 0;
+    const result = await runListener({
+      apiUrl: 'http://api.test', apiKey: 'tx_sandbox_test', forwardTo: 'http://local.test/webhook',
+      signingSecret: 'whsec_test', pollIntervalMs: 1, maxPollIntervalMs: 1,
+      once: false, signal: controller.signal, sleep: async () => {},
+      fetchFn: async (input, init) => {
+        if (String(input).startsWith('http://api.test/')) {
+          polls += 1;
+          return Response.json(polls === 1
+            ? listenResponse([
+              { id: 'whev_1', type: 'message.received', payload: {} },
+              { id: 'whev_2', payload: {} },
+            ], { cursor: 'cur_1' })
+            : listenResponse([{ id: 'whev_3', payload: {} }], { cursor: 'cur_2' }));
+        }
+        const eventId = new Headers(init?.headers).get(FORWARDED_WEBHOOK_HEADERS.ID) ?? '';
+        attempts.push(eventId);
+        return eventId === 'whev_1' ? failForward(init) : new Response('ok');
+      },
+      onForwardFailure: (failure) => { failures.push(failure); },
+      onBatch: ({ eventIds }) => { if (eventIds.includes('whev_3')) controller.abort(); },
+    });
+
+    expect(attempts).toEqual(['whev_1', 'whev_2', 'whev_3']);
+    expect(failures).toMatchObject([{ eventId: 'whev_1', eventType: 'message.received', ...expected }]);
+    expect(result).toMatchObject({
+      delivered: 2, failed: 1, eventIds: ['whev_2', 'whev_3'], cursor: 'cur_2',
+    });
+  });
+
   it('stops while a local webhook forward is in flight', async () => {
     const controller = new AbortController();
     let forwardStarted!: () => void;
@@ -417,8 +461,17 @@ describe('webhook listener', () => {
   });
 });
 
+async function closedPortUrl(): Promise<string> {
+  const server = createServer();
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const address = server.address();
+  if (!address || typeof address === 'string') throw new Error('Missing test server port.');
+  await new Promise<void>((resolve) => server.close(() => resolve()));
+  return `http://127.0.0.1:${address.port}/webhook`;
+}
+
 function listenResponse(
-  data: Array<{ id: string; payload: unknown }>,
+  data: Array<{ id: string; type?: string; payload: unknown }>,
   options: { cursor: string | null; hasMore?: boolean; nextPollAfterMs?: number },
 ) {
   return {

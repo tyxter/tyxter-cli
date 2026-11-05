@@ -35,6 +35,10 @@ attempt or repeating simulation, and respects the server polling delay.
 Listener jitter preserves the server's `next_poll_after_ms` lower bound. Each
 `doctor` network check has a five-second deadline; its API probe sends `wait_ms=0`.
 
+A failed local forward (non-2xx, timeout, refused connection) does not stop the
+listener: it is reported on stderr with its `events resend` command, and the
+cursor moves past the page. `listen --once` exits 1 when a forward failed.
+
 ## Repo Map
 
 - `src/main.ts` — CLI entrypoint and command dispatcher.
