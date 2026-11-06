@@ -1,7 +1,14 @@
 import { randomBytes } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
 
-import { endpointUrl, HttpStatusError, type FetchLike, readFailure } from './http.js';
+import {
+  endpointUrl,
+  errorMessage,
+  HttpStatusError,
+  type FetchLike,
+  readFailure,
+  requestErrorCode,
+} from './http.js';
 import { ListenWebhookEventsResponseSchema, type ListenWebhookEventsResponse } from './schemas.js';
 import { signWebhook } from './signature.js';
 
@@ -12,6 +19,23 @@ export const FORWARDED_WEBHOOK_HEADERS = {
 } as const;
 
 const DEFAULT_FORWARD_TIMEOUT_MS = 30_000;
+
+type ListenEvent = ListenWebhookEventsResponse['data'][number];
+
+export type ForwardFailureKind =
+  | 'http_status'
+  | 'timeout'
+  | 'connection_refused'
+  | 'request_failed';
+
+export interface ForwardFailure {
+  readonly eventId: string;
+  readonly eventType: string | null;
+  readonly kind: ForwardFailureKind;
+  /** The local app's HTTP status when it answered; null when no response arrived. */
+  readonly statusCode: number | null;
+  readonly message: string;
+}
 
 export interface ListenerOptions {
   readonly apiUrl: string;
@@ -30,7 +54,12 @@ export interface ForwardingListenerOptions extends ListenerOptions {
   readonly forwardTo: string;
   readonly signingSecret: string;
   readonly now?: () => number;
-  readonly shouldForward?: (event: ListenWebhookEventsResponse['data'][number]) => boolean;
+  readonly shouldForward?: (event: ListenEvent) => boolean;
+  /**
+   * Receives each failed local forward, after which the page continues with its next event.
+   * Without it, the first failed forward is thrown.
+   */
+  readonly onForwardFailure?: (failure: ForwardFailure) => void | Promise<void>;
 }
 
 export interface RunListenerOptions extends ForwardingListenerOptions {
@@ -44,6 +73,7 @@ export interface RunListenerOptions extends ForwardingListenerOptions {
   readonly onRateLimited?: (details: { retryAfterMs: number }) => void | Promise<void>;
   readonly onBatch?: (details: {
     delivered: number;
+    failed: number;
     eventIds: readonly string[];
     cursor: string | null;
     hasMore: boolean;
@@ -59,6 +89,11 @@ export interface PollResult {
   readonly cursor: string | null;
   readonly hasMore: boolean;
   readonly nextPollAfterMs?: number;
+}
+
+export interface ListenerResult extends PollResult {
+  /** Forwards that failed during the run; each one was passed to onForwardFailure. */
+  readonly failed: number;
 }
 
 export interface ListenPage {
@@ -110,15 +145,22 @@ export async function pollOnce(options: ForwardingListenerOptions): Promise<Poll
   const eventIds: string[] = [];
   for (const event of page.data) {
     if (options.shouldForward && !options.shouldForward(event)) continue;
-    await forwardEvent({
-      eventId: event.id,
-      payload: event.payload,
-      forwardTo: options.forwardTo,
-      signingSecret: options.signingSecret,
-      fetchFn,
-      signal: options.signal,
-      now: options.now,
-    });
+    try {
+      await forwardEvent({
+        eventId: event.id,
+        payload: event.payload,
+        forwardTo: options.forwardTo,
+        signingSecret: options.signingSecret,
+        fetchFn,
+        signal: options.signal,
+        now: options.now,
+      });
+    } catch (error) {
+      // A stopping listener interrupts the forward; the page stays unsaved and replays later.
+      if (!options.onForwardFailure || options.signal?.aborted) throw error;
+      await options.onForwardFailure(describeForwardFailure(event, error));
+      continue;
+    }
     eventIds.push(event.id);
   }
 
@@ -131,9 +173,10 @@ export async function pollOnce(options: ForwardingListenerOptions): Promise<Poll
   };
 }
 
-export async function runListener(options: RunListenerOptions): Promise<PollResult> {
+export async function runListener(options: RunListenerOptions): Promise<ListenerResult> {
   let cursor = options.cursor ?? null;
   let delivered = 0;
+  let failed = 0;
   const forwardedEventIds: string[] = [];
   let hasMore = false;
   let nextPollAfterMs: number | undefined;
@@ -143,8 +186,18 @@ export async function runListener(options: RunListenerOptions): Promise<PollResu
   do {
     if (options.signal?.aborted) break;
     let result: PollResult;
+    let pageFailed = 0;
     try {
-      result = await pollOnce({ ...options, cursor: cursor ?? undefined });
+      // A failed forward is reported and skipped: the API returns one cursor per page, so
+      // holding it would re-forward the page's accepted events and stall every later event.
+      result = await pollOnce({
+        ...options,
+        cursor: cursor ?? undefined,
+        onForwardFailure: async (failure) => {
+          pageFailed += 1;
+          await options.onForwardFailure?.(failure);
+        },
+      });
     } catch (error) {
       if (options.signal?.aborted && isAbortError(error)) break;
       if (isListenRateLimit(error)) {
@@ -158,6 +211,7 @@ export async function runListener(options: RunListenerOptions): Promise<PollResu
     }
 
     delivered += result.delivered;
+    failed += pageFailed;
     forwardedEventIds.push(...result.eventIds);
     const retained = options.retainedEventIds ?? 1000;
     if (forwardedEventIds.length > retained) {
@@ -168,6 +222,7 @@ export async function runListener(options: RunListenerOptions): Promise<PollResu
     nextPollAfterMs = result.nextPollAfterMs;
     await options.onBatch?.({
       delivered: result.delivered,
+      failed: pageFailed,
       eventIds: result.eventIds,
       cursor,
       hasMore,
@@ -192,7 +247,7 @@ export async function runListener(options: RunListenerOptions): Promise<PollResu
     }
   } while (!options.signal?.aborted);
 
-  return { delivered, eventIds: forwardedEventIds, cursor, hasMore, nextPollAfterMs };
+  return { delivered, failed, eventIds: forwardedEventIds, cursor, hasMore, nextPollAfterMs };
 }
 
 export async function forwardEvent(input: {
@@ -238,6 +293,24 @@ export async function forwardEvent(input: {
     clearTimeout(timeout);
     input.signal?.removeEventListener('abort', abortForward);
   }
+}
+
+function describeForwardFailure(event: ListenEvent, error: unknown): ForwardFailure {
+  const failure = {
+    eventId: event.id,
+    eventType: event.type ?? null,
+    message: errorMessage(error),
+  };
+  if (error instanceof HttpStatusError) {
+    return { ...failure, kind: 'http_status', statusCode: error.status };
+  }
+  if (error instanceof DOMException && error.name === 'TimeoutError') {
+    return { ...failure, kind: 'timeout', statusCode: null };
+  }
+  if (requestErrorCode(error) === 'ECONNREFUSED') {
+    return { ...failure, kind: 'connection_refused', statusCode: null };
+  }
+  return { ...failure, kind: 'request_failed', statusCode: null };
 }
 
 function isAbortError(error: unknown): boolean {

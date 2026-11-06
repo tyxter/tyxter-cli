@@ -177,6 +177,16 @@ Forwarding to the local webhook has a 30-second response deadline and stops
 when the listener is interrupted. The cursor is saved only after a complete
 batch, so an interrupted event may be replayed when the listener restarts.
 
+A failed forward (a non-2xx answer, the 30-second deadline, or a refused
+connection) does not stop the listener. The CLI reports it on stderr with the
+event id, the event type, the failure and the `tyxter events resend` command
+that replays it, then forwards the next events. The cursor still advances past
+that page, so the listener does not retry the failed event; replay it once your
+handler is fixed. With `--json`, the report is a
+`tyxter_cli_listen_forward_failed` JSON line on stderr. `listen --once` exits 1
+when any of its forwards failed. `listen prod` reports failures without a replay
+command, because `events resend` accepts only sandbox keys.
+
 `listen prod` requires a `tx_live_...` key and is intentionally finite. By
 default it opens a five-minute listen session
 (`TYXTER_WEBHOOK_LISTEN_TTL_SECONDS=300`), passes `listen_session_id` to

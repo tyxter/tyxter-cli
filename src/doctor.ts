@@ -1,4 +1,4 @@
-import { endpointUrl, type FetchLike, withRequestTimeout } from './http.js';
+import { endpointUrl, errorMessage, type FetchLike, withRequestTimeout } from './http.js';
 import { FORWARDED_WEBHOOK_HEADERS, readListenPage } from './listener.js';
 import { signWebhook } from './signature.js';
 import { resolveListenerState } from './state.js';
@@ -27,13 +27,6 @@ export interface DoctorResult {
   readonly signing_secret: string | null;
   readonly cursor: string | null;
   readonly checks: readonly DoctorCheck[];
-}
-
-interface FetchErrorCause extends Error {
-  readonly address?: string;
-  readonly code?: string;
-  readonly port?: number | string;
-  readonly syscall?: string;
 }
 
 export async function runDoctor(options: DoctorOptions): Promise<DoctorResult> {
@@ -166,24 +159,4 @@ async function probeForwardUrl(
     ok: false,
     message: `${options.forwardTo} returned HTTP ${response.status}.`,
   };
-}
-
-function errorMessage(error: unknown): string {
-  if (!(error instanceof Error)) return String(error);
-  const cause = error.cause;
-  const causeMessage = causeDiagnostic(cause);
-  return causeMessage ? `${error.message}: ${causeMessage}` : error.message;
-}
-
-function causeDiagnostic(cause: unknown): string | undefined {
-  if (!(cause instanceof Error)) return cause === undefined ? undefined : String(cause);
-  const detail = cause as FetchErrorCause;
-  const address = detail.address ? String(detail.address) : undefined;
-  const port = detail.port === undefined ? undefined : String(detail.port);
-  const endpoint = address && port ? `${address}:${port}` : address ?? port;
-  const parts = [detail.code, detail.syscall, endpoint].filter(
-    (part): part is string => typeof part === 'string' && part.length > 0,
-  );
-  if (parts.length > 0) return parts.join(' ');
-  return cause.message;
 }

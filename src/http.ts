@@ -1,5 +1,12 @@
 export type FetchLike = typeof fetch;
 
+interface FetchErrorCause extends Error {
+  readonly address?: string;
+  readonly code?: string;
+  readonly port?: number | string;
+  readonly syscall?: string;
+}
+
 export async function withRequestTimeout<T>(
   signal: AbortSignal | undefined,
   timeoutMs: number,
@@ -32,6 +39,34 @@ export class HttpStatusError extends Error {
     super(message);
     this.name = 'HttpStatusError';
   }
+}
+
+/** The system error code behind a failed fetch, such as ECONNREFUSED. */
+export function requestErrorCode(error: unknown): string | undefined {
+  if (!(error instanceof Error) || !(error.cause instanceof Error)) return undefined;
+  const code = (error.cause as FetchErrorCause).code;
+  return typeof code === 'string' ? code : undefined;
+}
+
+/** The message plus any fetch cause, e.g. "fetch failed: ECONNREFUSED connect 127.0.0.1:3000". */
+export function errorMessage(error: unknown): string {
+  if (!(error instanceof Error)) return String(error);
+  const cause = error.cause;
+  const causeMessage = causeDiagnostic(cause);
+  return causeMessage ? `${error.message}: ${causeMessage}` : error.message;
+}
+
+function causeDiagnostic(cause: unknown): string | undefined {
+  if (!(cause instanceof Error)) return cause === undefined ? undefined : String(cause);
+  const detail = cause as FetchErrorCause;
+  const address = detail.address ? String(detail.address) : undefined;
+  const port = detail.port === undefined ? undefined : String(detail.port);
+  const endpoint = address && port ? `${address}:${port}` : address ?? port;
+  const parts = [detail.code, detail.syscall, endpoint].filter(
+    (part): part is string => typeof part === 'string' && part.length > 0,
+  );
+  if (parts.length > 0) return parts.join(' ');
+  return cause.message;
 }
 
 export function endpointUrl(baseUrl: string, path: string): URL {
