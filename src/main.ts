@@ -63,6 +63,7 @@ async function main(): Promise<void> {
       let primaryError: unknown;
       const controller = new AbortController();
       const removeSignalHandlers = bindAbortSignals(controller);
+      const deadlineMs = Date.now() + ttlSeconds * 1000;
 
       try {
         session = await createWebhookListenSession({
@@ -70,6 +71,11 @@ async function main(): Promise<void> {
           apiKey: listenOptions.apiKey,
           ttlSeconds,
           reason,
+          signal: controller.signal,
+          deadlineMs,
+          onRateLimited: ({ retryAfterMs }) => {
+            console.error(`Production listen session create rate limited; waiting ${retryAfterMs}ms before retrying`);
+          },
         });
         if (json) {
           console.log(
@@ -90,8 +96,10 @@ async function main(): Promise<void> {
         }
 
         const expiresInMs = Math.min(
-          ttlSeconds * 1000, Math.max(0, Date.parse(session.expires_at) - Date.now()),
+          Math.max(0, deadlineMs - Date.now()),
+          Math.max(0, Date.parse(session.expires_at) - Date.now()),
         );
+        if (expiresInMs === 0) controller.abort();
         const expiryTimer = setTimeout(() => controller.abort(), expiresInMs);
         expiryTimer.unref();
         try {
@@ -163,6 +171,7 @@ async function main(): Promise<void> {
           clearTimeout(expiryTimer);
         }
       } catch (error) {
+        if (controller.signal.aborted && error instanceof Error && error.name === 'AbortError') return;
         primaryError = error;
         throw error;
       } finally {

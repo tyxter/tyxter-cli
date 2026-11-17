@@ -128,6 +128,94 @@ describe('listen command output', () => {
     }
   });
 
+  it.each(['retry', 'too-long', 'interrupt'] as const)(
+    'handles a production session create rate limit (%s)', async (scenario) => {
+      const stateDir = await mkdtemp(join(tmpdir(), 'tyxter-production-test-'));
+      const requests: string[] = [];
+      const createTimes: number[] = [];
+      const retryAfter = scenario === 'retry' ? '0.1' : scenario === 'too-long' ? '360' : '60';
+      const session = {
+        id: 'wls_test', object: 'webhook_listen_session', environment: 'production', status: 'active',
+        expires_at: new Date(Date.now() + 30_000).toISOString(), disabled_at: null,
+        created_at: new Date().toISOString(), trace_id: 'trc_test',
+        poll_endpoint: '/v1/webhook-events/listen', retrieve_endpoint: '/v1/webhook-events/listen/:outbox_event_id',
+      };
+      const server = createServer((request, response) => {
+        const url = new URL(request.url ?? '/', 'http://localhost');
+        requests.push(`${request.method} ${url.pathname}`);
+        response.setHeader('content-type', 'application/json');
+        if (request.method === 'POST') {
+          createTimes.push(Date.now());
+          if (createTimes.length === 1) {
+            response.writeHead(429, { 'retry-after': retryAfter }).end('{}');
+          } else {
+            response.writeHead(201).end(JSON.stringify(session));
+          }
+        } else if (request.method === 'GET') {
+          expect(url.searchParams.get('listen_session_id')).toBe(session.id);
+          response.end(JSON.stringify({
+            object: 'webhook_event_listen', data: [], has_more: false, next_cursor: null,
+          }));
+        } else {
+          response.end(JSON.stringify({ ...session, status: 'disabled', disabled_at: new Date().toISOString() }));
+        }
+      });
+      try {
+        await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+        const address = server.address();
+        if (!address || typeof address === 'string') throw new Error('Missing server port');
+        const child = spawn(process.execPath, [
+          '--import', 'tsx', 'src/main.ts', 'listen', 'prod', '--json', '--once',
+          '--ttl-seconds', scenario === 'too-long' ? '30' : '120',
+          '--api-url', `http://127.0.0.1:${address.port}`, '--api-key', 'tx_live_test',
+          '--forward-to', 'http://127.0.0.1:1/hook', '--state-dir', stateDir,
+        ], { env: { PATH: process.env.PATH }, stdio: ['ignore', 'pipe', 'pipe'] });
+        let stdout = '';
+        let stderr = '';
+        let interrupted = false;
+        child.stdout.on('data', (chunk) => { stdout += chunk; });
+        child.stderr.on('data', (chunk) => {
+          stderr += chunk;
+          if (scenario === 'interrupt' && !interrupted && stderr.includes('waiting')) {
+            interrupted = child.kill('SIGINT');
+          }
+        });
+        const exit = new Promise<number | null>((resolve) => child.on('close', resolve));
+        const guard = setTimeout(() => child.kill('SIGKILL'), 8000);
+        try {
+          expect(await exit, stderr).toBe(scenario === 'too-long' ? 1 : 0);
+          if (scenario === 'too-long') {
+            expect(stderr).toMatch(/session create rate limited.*360000ms.*remaining run duration/i);
+          } else {
+            expect(stderr.trim().split(/\r?\n/)).toHaveLength(1);
+            expect(stderr).toContain(`session create rate limited; waiting ${Number(retryAfter) * 1000}ms`);
+          }
+          if (scenario === 'retry') {
+            expect(requests).toEqual([
+              'POST /v1/webhook-events/listen-sessions',
+              'POST /v1/webhook-events/listen-sessions',
+              'GET /v1/webhook-events/listen',
+              'DELETE /v1/webhook-events/listen-sessions/wls_test',
+            ]);
+            expect(createTimes[1]! - createTimes[0]!).toBeGreaterThanOrEqual(100);
+            expect(stdout.trim().split(/\r?\n/).map((line) => JSON.parse(line))).toMatchObject([
+              { action: 'created' }, { object: 'tyxter_cli_listen_start' },
+              { object: 'tyxter_cli_listen_batch' }, { action: 'disabled' },
+            ]);
+          } else {
+            expect(requests).toEqual(['POST /v1/webhook-events/listen-sessions']);
+            expect(stdout).toBe('');
+            if (scenario === 'interrupt') expect(interrupted).toBe(true);
+          }
+        } finally { clearTimeout(guard); child.kill('SIGKILL'); }
+      } finally {
+        server.closeAllConnections();
+        await new Promise<void>((resolve) => server.close(() => resolve()));
+        await rm(stateDir, { recursive: true, force: true });
+      }
+    }, 10_000,
+  );
+
   it('disables a production session when interrupted during creation and cleanup', async () => {
     const stateDir = await mkdtemp(join(tmpdir(), 'tyxter-production-test-'));
     const requests: string[] = [];

@@ -1,4 +1,4 @@
-import { endpointUrl, type FetchLike, readFailure, withRequestTimeout } from './http.js';
+import { endpointUrl, type FetchLike, readFailure, retryRateLimited, withRequestTimeout } from './http.js';
 import {
   WebhookListenSessionResponseSchema,
   type WebhookListenSessionResponse,
@@ -10,6 +10,9 @@ export interface CreateWebhookListenSessionOptions {
   readonly ttlSeconds?: number;
   readonly reason?: string;
   readonly fetchFn?: FetchLike;
+  readonly signal?: AbortSignal;
+  readonly deadlineMs?: number;
+  readonly onRateLimited?: (details: { retryAfterMs: number }) => void | Promise<void>;
 }
 
 export interface DisableWebhookListenSessionOptions {
@@ -29,7 +32,7 @@ export async function createWebhookListenSession(
 
   // Keep creation alive briefly after an interrupt so the caller can recover the
   // session id and disable it. Never use the listener's aborted signal here.
-  return withRequestTimeout(undefined, 5_000, async (signal) => {
+  return retryRateLimited(() => withRequestTimeout(undefined, 5_000, async (signal) => {
     const response = await fetchFn(endpointUrl(options.apiUrl, '/v1/webhook-events/listen-sessions'), {
       signal,
       method: 'POST',
@@ -42,6 +45,10 @@ export async function createWebhookListenSession(
     });
     if (!response.ok) await readFailure(response, 'webhook listen session create');
     return WebhookListenSessionResponseSchema.parse(await response.json());
+  }), {
+    signal: options.signal,
+    deadlineMs: options.deadlineMs ?? Date.now() + (options.ttlSeconds ?? 300) * 1000,
+    onRateLimited: options.onRateLimited,
   });
 }
 
