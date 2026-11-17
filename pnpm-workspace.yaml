@@ -1,2 +1,8 @@
 allowBuilds:
   esbuild: true
+# `pnpm audit` ignores one advisory: GHSA-fc5q-39xc-vjpf (picomatch, no patched
+# version published). It reaches this package only through the dev tools vite and
+# vitest; `pnpm audit --prod` reports nothing. Remove this once a patch is published.
+auditConfig:
+  ignoreGhsas:
+    - GHSA-fc5q-39xc-vjpf
