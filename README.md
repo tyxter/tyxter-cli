@@ -427,9 +427,12 @@ recent 1,000 event ids by default (configurable with `retainedEventIds`). Delive
 counts remain cumulative, and `onBatch` receives every forwarded id.
 
 After a version tag passes validation and its container is published, GitHub
-Actions creates a GitHub release with generated release notes and the container
-image reference. Stable versions are marked latest; other versions are marked
-as prereleases. Rerunning the workflow preserves an existing release.
+Actions creates a GitHub release. Its notes are that version's section of
+[`CHANGELOG.md`](./CHANGELOG.md), the npm and container image references, and
+GitHub's generated list of merged pull requests. A version without a changelog
+section fails `pnpm test` and the tag workflow. Stable versions are marked
+latest; other versions are marked as prereleases. Rerunning the workflow
+preserves an existing release.
 
 ## License
 

@@ -87,7 +87,9 @@ Before opening a pull request:
 2. Add or update tests when behavior changes.
 3. Update `README.md`, `.env.example`, or the agent skill when setup behavior
    changes.
-4. Run:
+4. Add a line under `## [Unreleased]` in `CHANGELOG.md` when the change is
+   visible to someone using the CLI.
+5. Run:
 
    ```bash
    pnpm test
@@ -107,8 +109,10 @@ the pull request.
 
 Before tagging a release, set both `package.json` and
 `packages/tyxter-cli/package.json` to the intended version, pin the alias's
-`@tyxter/cli` dependency to that exact version, and use an
-exact matching `v<version>` tag. CI validates the tag, both supported Node versions,
+`@tyxter/cli` dependency to that exact version, move the `## [Unreleased]`
+entries in `CHANGELOG.md` under a `## [<version>] - <date>` heading, and use an
+exact matching `v<version>` tag. `pnpm test` and the tag workflow fail when the
+version has no changelog section. CI validates the tag, both supported Node versions,
 and amd64/arm64 containers before publishing. Only stable version tags update the
 `latest` image. Containers publish only on version tags; pushes to `main` and
 pull requests run validation without publishing. The final image has no shell
@@ -127,8 +131,9 @@ and direct publish permission. npm may require an interactive 2FA login for this
 account setting. Do not add an npm token to GitHub secrets.
 
 After a version tag passes validation and npm and its container are published, GitHub
-Actions creates a GitHub release with generated release notes and the container
-image reference. Stable versions are marked latest; other versions are marked
+Actions creates a GitHub release. Its notes are that version's `CHANGELOG.md`
+section, the npm and container image references, and GitHub's generated list of
+merged pull requests. Stable versions are marked latest; other versions are marked
 as prereleases. Rerunning the workflow preserves an existing release.
 
 ## Agent Contributions

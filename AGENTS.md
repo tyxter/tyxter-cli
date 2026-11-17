@@ -60,7 +60,9 @@ cursor moves past the page. `listen --once` exits 1 when a forward failed.
 - `src/schemas.ts` — Zod schemas for API payloads.
 - `src/*.test.ts` — Vitest suites colocated with sources.
 - `scripts/tour-demo.mjs` — local tour receiver demo used by `pnpm tour:demo`.
-- `scripts/release-metadata.mjs` — validates tag/version agreement and stable channel eligibility.
+- `scripts/release-metadata.mjs` — validates tag/version agreement, stable channel eligibility,
+  and that `CHANGELOG.md` has a section for the version (the release notes).
+- `CHANGELOG.md` — one section per version; user-visible changes go under `## [Unreleased]`.
 - `scripts/check-package.mjs` — verifies npm package contents before release.
 - `packages/tyxter-cli/` — npm compatibility executable pinned to the exact `@tyxter/cli` release.
 - `tsconfig.build.json`, `vitest.config.ts` — exclude tests from the production build and compiled output from test discovery.
@@ -188,8 +190,10 @@ Rebuild the container (`docker compose build`) if you changed anything under
   other tags use `next`. Configure both npm trusted publishers for
   `tyxter/tyxter-cli`, workflow `publish-tyxter-cli.yml`, with publish permission.
   No npm token belongs in GitHub secrets. Existing npm versions are skipped on rerun.
-  After npm and container publishing succeed, CI creates a GitHub release with generated
-  notes; reruns preserve existing releases. Non-stable tags create prereleases.
+  After npm and container publishing succeed, CI creates a GitHub release from the version's
+  `CHANGELOG.md` section plus generated notes; reruns preserve existing releases.
+  Non-stable tags create prereleases. A version without a changelog section fails
+  `pnpm test` and the tag workflow.
 
 - Refuse live keys for normal sandbox commands (`listen`, `checkpoint`,
   `doctor`, `tour`, `simulate inbound`, `events resend`). The only live-key
