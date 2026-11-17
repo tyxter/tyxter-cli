@@ -195,6 +195,11 @@ default it opens a five-minute listen session
 persist production cursors; the local state file is used only for the signing
 secret that your local receiver verifies.
 
+Production session creation honors `429 Retry-After`, reporting each wait on
+stderr. Waiting and polling share the run's TTL budget. If the required wait
+cannot fit, the command exits 1 with the rate limit and time to wait. Ctrl+C
+during a rate-limit wait exits cleanly without creating a session.
+
 `TYXTER_WEBHOOK_POLL_INTERVAL_MS` is the base retry/backoff interval. It is not
 a fixed tight polling loop when no events are available.
 

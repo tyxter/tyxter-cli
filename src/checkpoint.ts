@@ -1,7 +1,5 @@
-import { setTimeout as delay } from 'node:timers/promises';
-
-import { HttpStatusError } from './http.js';
-import { readListenPage, type ListenPage, type ListenerOptions } from './listener.js';
+import { retryRateLimited } from './http.js';
+import { readListenPage, type ListenerOptions } from './listener.js';
 
 export interface CheckpointOptions extends ListenerOptions {
   readonly onPage?: (details: CheckpointPageDetails) => void | Promise<void>;
@@ -26,23 +24,15 @@ export async function checkpointListenCursor(
   let cursor = options.cursor ?? null;
   let pages = 0;
   let skipped = 0;
-  let retryDelayMs = 1_000;
 
   while (true) {
-    options.signal?.throwIfAborted();
-    let page: ListenPage;
-    try {
-      page = await readListenPage({
+    const page = await retryRateLimited(
+      () => readListenPage({
         ...options,
         cursor: cursor ?? undefined,
-      });
-    } catch (error) {
-      if (!(error instanceof HttpStatusError) || error.status !== 429) throw error;
-      await (options.sleep ?? sleep)(error.retryAfterMs ?? retryDelayMs, options.signal);
-      retryDelayMs = Math.min(30_000, retryDelayMs * 2);
-      continue;
-    }
-    retryDelayMs = 1_000;
+      }),
+      options,
+    );
     pages += 1;
     skipped += page.data.length;
     cursor = page.cursor ?? cursor;
@@ -56,8 +46,4 @@ export async function checkpointListenCursor(
   }
 
   return { cursor, pages, skipped };
-}
-
-async function sleep(ms: number, signal: AbortSignal | undefined): Promise<void> {
-  await delay(ms, undefined, { signal });
 }

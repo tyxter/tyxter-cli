@@ -1,3 +1,5 @@
+import { setTimeout as delay } from 'node:timers/promises';
+
 export type FetchLike = typeof fetch;
 
 interface FetchErrorCause extends Error {
@@ -39,6 +41,45 @@ export class HttpStatusError extends Error {
     super(message);
     this.name = 'HttpStatusError';
   }
+}
+
+export async function retryRateLimited<T>(
+  run: () => Promise<T>,
+  options: {
+    readonly signal?: AbortSignal;
+    readonly deadlineMs?: number;
+    readonly onRateLimited?: (details: { retryAfterMs: number }) => void | Promise<void>;
+    readonly sleep?: (ms: number, signal: AbortSignal | undefined) => Promise<void>;
+  } = {},
+): Promise<T> {
+  let retryDelayMs = 1_000;
+  while (true) {
+    options.signal?.throwIfAborted();
+    try {
+      return await run();
+    } catch (error) {
+      if (!(error instanceof HttpStatusError) || error.status !== 429) throw error;
+      options.signal?.throwIfAborted();
+      const retryAfterMs = error.retryAfterMs ?? retryDelayMs;
+      const durationError = new Error(
+        `${error.action} rate limited; retry after ${retryAfterMs}ms; wait exceeds remaining run duration`,
+      );
+      if (options.deadlineMs !== undefined && Date.now() + retryAfterMs >= options.deadlineMs) {
+        throw durationError;
+      }
+      await options.onRateLimited?.({ retryAfterMs });
+      await (options.sleep ?? sleep)(retryAfterMs, options.signal);
+      options.signal?.throwIfAborted();
+      if (options.deadlineMs !== undefined && Date.now() >= options.deadlineMs) {
+        throw durationError;
+      }
+      retryDelayMs = Math.min(30_000, retryDelayMs * 2);
+    }
+  }
+}
+
+async function sleep(ms: number, signal: AbortSignal | undefined): Promise<void> {
+  await delay(ms, undefined, { signal });
 }
 
 /** The system error code behind a failed fetch, such as ECONNREFUSED. */

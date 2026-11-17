@@ -16,6 +16,9 @@ Normal listener commands use sandbox keys. The only live-key path is
 `listen prod`, an explicit finite diagnostic that creates a short-lived
 production listen session, passes `listen_session_id` while polling, and
 disables the session on exit. It is not a durable production transport.
+Session creation honors `429 Retry-After` with an interruptible wait reported
+on stderr. Creation retries and polling share the run's finite TTL budget;
+a wait that cannot fit exits with the rate limit and required wait time.
 
 State (local signing secret + cursor) lives in the `tyxter-cli-data` Docker
 volume, or in `.tyxter-cli/` when running outside Docker.
